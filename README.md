@@ -2,6 +2,9 @@
 
 We modeled the Julia key agreement protocol presented in the paper (doi: https://doi.org/10.1145/3448300.3468116) using the formal verification tool Tamarin prover.
 
+* The folder JKA_1. contains the tamarin models of JKA protocol with single scalar mulitplication.
+* The folder JKA_2. contains the tamarin models of JKA protocol with two scalar mulitplication.
+
 ## Getting started
 
 Download and install the Tamarin Prover.
