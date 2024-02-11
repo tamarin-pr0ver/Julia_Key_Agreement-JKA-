@@ -1,0 +1,217 @@
+theory JuliaKA
+
+/**********************************************************
+    Julia key agreement with single scalar multiplication
+
+Aims to analyse the sub-term d2 of the Julia secret.
+
+Assumption:
+ >  static secret key is revealed from both the communication parties
+
+************************************************************/
+begin
+
+builtins:
+     hashing, diffie-hellman, bilinear-pairing, multiset, symmetric-encryption
+
+// Public key infrastructure
+rule Generate_key:
+  let pkA  = 'g'^~s1
+  in
+  [ Fr( ~s1 ) ]
+--[ Init($P1), Honest($P1) ]->
+  [ !Ltk( $P1, ~s1 ), !Pk( $P1, pkA ), Out( pkA )
+    , Out(<$P1, ~s1>)]
+
+// Reveal of static secret key
+rule Reveal_ltk:
+  [ !Ltk( $P1, ~ea) ]
+--[ RevealLtk($P1) ]->
+  [ Out( ~ea) ]
+
+//Prehandshake by generating ephemeral secrects by P1 and send to P2
+rule Prehandshake_P1_P2:
+  let
+      pkS1 = 'g'^~s1
+      EphK1 = pmult('g', ~eph1)
+      sid = <$P1, $P2, EphK1, 'P1'>
+      h1  = h(<'h1', EphK1>)
+      t1 = h(<'t1', EphK1>)
+  in
+  [ !Ltk( $P1, ~s1 )
+   , Fr(~eph1)
+   , In(<$P1, ~s1>)]
+--[
+        Honest($P1)
+      , Honest($P2)
+      , Running($P1, $P2, <'P1','P2',<'h1', h1>>)
+      , Commit($P1, $P2, <'P2','P1',<'h1', h1>>)
+      , StaticSecret($P1, ~s1)
+      , EphSecret($P1, ~eph1)
+      , SessionHash(sid, h1 )
+  ]->
+  [
+      !Ephk( $P1, ~eph1 )
+     , Out(pkS1)
+     , Out(~s1)
+     , !Pk( $P1, pkS1 )
+     , P1_prehandshake(<$P1, ~s1, pkS1, ~eph1, EphK1, h1, t1>)
+    ]
+
+//Prehandshake by generating ephemeral secrects by P2 after receiving pre-handshake message from P1
+rule Prehandshake_P2_P1:
+  let
+    pkS2 = 'g'^~s2
+    EphK2 = pmult('g', ~eph2)
+    sid = <$P2, $P1, EphK2, 'P2'>
+    h1 = h('h1', EphK1)
+    t2  = h('t2', EphK2)
+    t = t1^t2
+    PC2 = pmult(t2, pkS1)
+  in
+  [
+      Fr(~eph2)
+      , Fr(~s2)
+      , P1_prehandshake(<$P1, ~s1, pkS1, ~eph1, EphK1, h1, t1>)
+      , In(~s1)
+    ]
+--[
+       Honest($P1)
+      , Honest($P2)
+      , Commit( $P1, $P, <'P2','P1',<'h1', h1>>)
+      , Init($P2)
+      , StaticSecret($P2, ~s2)
+      , EphSecret($P2, ~eph2)
+      , SessionHash(sid, h1 )
+      , SessionHash1(sid, t2 )
+
+      ]->
+  [  P1_P2_prehandshake(<$P1, $P2, ~s2, ~s1, pkS2, ~eph2, ~eph1, EphK1, EphK2, h1, t1, t2>)
+     , Out(~s1)
+     , Out(~s2)
+    ]
+
+// Reveal of Ephemeral secrect key
+rule Ephemeral_Reveal:
+  [ !Ephk( $P, ~x ) ]
+--[ RevealEphk( $P ) ]->
+  [ Out( ~x ) ]
+/******************************************************/
+/*              Phase 3: Handshake                */
+/******************************************************/
+
+//Followed the same steps as given in the paper for the handshake phase for P1.
+rule HandshakeP1_P2:
+  let
+     t = t1^t2
+     t_s1 = t^~s1
+     t_s1_e2 = t_s1^~eph2
+     d2 = pmult(t_s1_e2, 'g')
+     D = d2
+     hsid = <$P1, $P2, 'P1'>
+     PC1 = pmult(t1, pkS2)
+     msg= senc('app1', D)
+  in
+  [
+    P1_P2_prehandshake(<$P1, $P2, ~s2, ~s1, pkS2, ~eph2, ~eph1, EphK1, EphK2, h1, t1, t2>)
+    , In(~s1)
+    , In(~s2)
+    ]
+  --[  Honest($P1)
+      , Honest($P2)
+      , Julia_Secrect(hsid, D)
+      , JuliaSecrect(D)
+      , SessionHash1(hsid, t2 )
+      , Commit($P1 , $P2,<'P1','P2',<'D', D>>)
+      , Running($P2, $P1, <'P2','P1',<'D', D>>)
+  ]->
+  [ P2_P1_handshake(<$P1, $P2, ~s2, ~s1, pkS2, ~eph2, ~eph1, EphK1, EphK2, h1, t1, t2>)
+    , Out(msg)
+    , Out(~s1)
+    , Out(~s2)
+    ]
+
+
+//Followed the same steps as given in the paper for the handshake phase for P2.
+rule HandshakeP2_P1:
+  let
+     t = t1^t2
+     t_s1 = t^~s1
+     t_s1_e2 = t_s1^~eph2
+     d2 = pmult(t_s1_e2, 'g')
+     D = d2
+     hsid = <$P1, $P2, 'P2'>
+     msg = sdec(msg, D)
+  in
+  [ P2_P1_handshake(<$P1, $P2, ~s2, ~s1, pkS2, ~eph2, ~eph1, EphK1, EphK2, h1, t1, t2>)
+  , In(msg)
+  , In(~s1)
+  , In(~s2)
+   ]
+
+--[
+   SessionHash1(hsid, t2 )
+   , Julia_Secrect(hsid, D)
+   , JuliaSecrect(D)
+   , Honest($P1)
+   , Honest($P2)
+   , Commit($P2, $P1,<'P2','P1',<'D', D>>)
+   , Running($P1 , $P2, <'P1','P2',<'D', D>>)
+]->
+[]
+
+/***************************************/
+/*         Executability Lemmas        */
+/***************************************/
+
+lemma JKA_executable_julia:
+  exists-trace
+  " Ex #j4 #j3 P1 P2 d.
+    Julia_Secrect( <P2,P1,'P1'>, d ) @ j4
+    & Julia_Secrect( <P2,P1,'P2'>, d ) @ j3
+    & j4 < j3
+    "
+
+/************************************/
+/*         Secrecy Lemmas           */
+/************************************/
+
+//static key Secrecy
+lemma longtermKeySecrecy:
+  "
+    not(
+        Ex p1 k #i #j.
+        StaticSecret(p1, k) @i
+        & K(k) @j
+        & not(Ex p #r. RevealLtk(p) @ r & Honest(p) @i )
+      )
+    "
+//Ephemeral key Secrecy
+lemma EphemeralKeySecrecy:
+  "
+    not(
+        Ex p1 k #i #j.
+        EphSecret(p1, k) @i
+        & K(k) @j
+        & not(Ex p #r. RevealEphk(p) @ r & Honest(p) @i & i < r )
+
+        )
+      "
+//Forward secrecy, aims to verify the secrecy of past communication
+lemma forwardSecrecy:
+  " All d #i. JuliaSecrect(d) @i
+      ==> not (Ex #j. K(d)@j)
+            | (Ex B #r. RevealLtk(B)@r & Honest(B) @i
+                  & r < i)
+    "
+
+//Backward secrecy, aims to verify the secrecy of future communication
+lemma backwardsecrecy:
+  "
+    All d #i. JuliaSecrect(d) @i
+      ==> not (Ex #j. K(d)@j)
+          | (Ex B #r. RevealLtk(B)@r & Honest(B) @i
+            & i < r)
+    "
+
+end
